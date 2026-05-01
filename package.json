@@ -75,7 +75,8 @@
     "commander": "^12.1.0",
     "log-update": "^6.1.0",
     "ora": "^8.1.1",
-    "playwright": "^1.49.1"
+    "@sparticuz/chromium": "^133.0.0",
+    "puppeteer-core": "^23.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

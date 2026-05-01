@@ -12,11 +12,11 @@ import { loadAllRules } from './rules/loader.js';
 import {
   fetchPage,
   createAuditContext,
-  fetchPageWithPlaywright,
+  fetchPageWithPuppeteer,
   closeBrowser,
   Crawler,
   type CrawledPage,
-  type PlaywrightFetchResult,
+  type BrowserFetchResult,
 } from './crawler/index.js';
 import {
   buildCategoryResult,
@@ -63,10 +63,10 @@ export interface AuditorOptions {
   categories?: string[];
   /** Request timeout in milliseconds */
   timeout?: number;
-  /** Whether to measure Core Web Vitals with Playwright */
+  /** Whether to measure Core Web Vitals with Puppeteer */
   measureCwv?: boolean;
-  /** Optional browser-based page fetcher (replaces Playwright when provided) */
-  browserFetcher?: (url: string, timeout: number) => Promise<PlaywrightFetchResult>;
+  /** Optional browser-based page fetcher (replaces Puppeteer when provided) */
+  browserFetcher?: (url: string, timeout: number) => Promise<BrowserFetchResult>;
   /** Callback when category audit starts */
   onCategoryStart?: OnCategoryStartCallback;
   /** Callback when category audit completes */
@@ -237,7 +237,7 @@ export class Auditor {
     let renderedHtml: string | undefined;
     let rendered$: import('cheerio').CheerioAPI | undefined;
     if (this.options.measureCwv) {
-      const fetcher = this.options.browserFetcher ?? fetchPageWithPlaywright;
+      const fetcher = this.options.browserFetcher ?? fetchPageWithPuppeteer;
       try {
         const pwResult = await fetcher(url, this.options.timeout);
         cwv = pwResult.cwv;
@@ -250,7 +250,7 @@ export class Auditor {
       } catch {
         // CWV measurement failed, continue without it
       } finally {
-        // Clean up Playwright browser (only when not using an injected fetcher)
+        // Clean up Puppeteer browser (only when not using an injected fetcher)
         if (!this.options.browserFetcher) {
           await closeBrowser();
         }
@@ -294,7 +294,7 @@ export class Auditor {
     const sitemapData = await this.fetchSitemap(url, robotsTxtContent);
 
     // Create crawler with CWV callback if enabled
-    const fetcher = this.options.browserFetcher ?? fetchPageWithPlaywright;
+    const fetcher = this.options.browserFetcher ?? fetchPageWithPuppeteer;
     const crawler = new Crawler({
       maxPages,
       concurrency,
@@ -314,7 +314,7 @@ export class Auditor {
     // Crawl the site
     const crawledPages = await crawler.crawl(url, maxPages, concurrency);
 
-    // Close Playwright browser if CWV was measured (only when not using an injected fetcher)
+    // Close Puppeteer browser if CWV was measured (only when not using an injected fetcher)
     if (this.options.measureCwv && !this.options.browserFetcher) {
       await closeBrowser();
     }
@@ -406,10 +406,17 @@ export class Auditor {
       const rules = getRulesByCategory(category.id);
       const ruleResults: RuleResult[] = [];
 
+      // For non-JS categories, prefer the rendered DOM when available so that
+      // CSR pages are audited against their actual content rather than the skeleton HTML.
+      // JS-category rules keep the raw context because they explicitly compare raw vs rendered.
+      const ruleContext = (category.id !== 'js' && context.rendered$)
+        ? { ...context, $: context.rendered$ }
+        : context;
+
       // Run each rule
       for (const rule of rules) {
         try {
-          const result = await rule.run(context);
+          const result = await rule.run(ruleContext);
           // Inject ruleId and page URL for consistent tracking
           const resultWithMeta: RuleResult = {
             ...result,

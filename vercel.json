@@ -1,0 +1,9 @@
+{
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "functions": {
+    "api/audit.ts": {
+      "maxDuration": 60
+    }
+  }
+}

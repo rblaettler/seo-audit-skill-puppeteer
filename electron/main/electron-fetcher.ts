@@ -1,13 +1,13 @@
 /**
  * Electron BrowserWindow-based page fetcher.
  *
- * Replaces Playwright inside the Electron app so we don't need an
+ * Replaces Puppeteer inside the Electron app so we don't need an
  * external Chromium binary (which macOS Gatekeeper blocks inside .app bundles).
- * Returns the same PlaywrightFetchResult interface so the Auditor is agnostic.
+ * Returns the same BrowserFetchResult interface so the Auditor is agnostic.
  */
 
 import { BrowserWindow, session } from 'electron';
-import type { PlaywrightFetchResult } from '@core/crawler/index.js';
+import type { BrowserFetchResult } from '@core/crawler/index.js';
 import type { CoreWebVitals } from '@core/types.js';
 
 /**
@@ -17,7 +17,7 @@ import type { CoreWebVitals } from '@core/types.js';
 export async function fetchPageWithBrowserWindow(
   url: string,
   timeout = 30000,
-): Promise<PlaywrightFetchResult> {
+): Promise<BrowserFetchResult> {
   // Dedicated session so interceptors don't affect the main window
   const ses = session.fromPartition(`cwv-fetch-${Date.now()}`);
 
@@ -54,7 +54,7 @@ export async function fetchPageWithBrowserWindow(
 
     const loadTime = performance.now() - startTime;
 
-    // Wait for dynamic content (mirrors Playwright fetcher's 1s wait)
+    // Wait for dynamic content (mirrors Puppeteer fetcher's 1s wait)
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Get rendered HTML
@@ -78,7 +78,7 @@ export async function fetchPageWithBrowserWindow(
 
 /**
  * Measure Core Web Vitals via executeJavaScript.
- * Uses the same PerformanceObserver approach as playwright-fetcher.ts.
+ * Uses the same PerformanceObserver approach as puppeteer-fetcher.ts.
  */
 async function measureCwvInWindow(win: BrowserWindow): Promise<CoreWebVitals> {
   return win.webContents.executeJavaScript(`

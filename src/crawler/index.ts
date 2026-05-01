@@ -6,15 +6,15 @@ export {
   type FetchResult,
 } from './fetcher.js';
 
-// Playwright fetcher exports
+// Puppeteer fetcher exports
 export {
   initBrowser,
   closeBrowser,
-  fetchPageWithPlaywright,
+  fetchPageWithPuppeteer,
   measureCoreWebVitals,
   getBrowser,
-  type PlaywrightFetchResult,
-} from './playwright-fetcher.js';
+  type BrowserFetchResult,
+} from './puppeteer-fetcher.js';
 
 // Crawler exports
 export {

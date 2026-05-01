@@ -195,7 +195,7 @@ export interface AuditContext {
   /** Redirect chain followed to reach this page */
   redirectChain?: RedirectChainEntry[];
 
-  // --- Tier 4: Rendered DOM (optional, requires Playwright) ---
+  // --- Tier 4: Rendered DOM (optional, requires Puppeteer) ---
 
   /** HTML after JavaScript rendering */
   renderedHtml?: string;

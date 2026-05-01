@@ -44,3 +44,4 @@ seo-report-*.html
 
 # Playwright MCP data
 .playwright-mcp/
+.vercel

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SEOmator is a comprehensive SEO audit tool (`@seomator/seo-audit`) with 251 rules across 20 categories. It ships as both a **CLI tool** (published to npm) and an **Electron desktop app** (local only). It fetches web pages, parses HTML with Cheerio, optionally measures Core Web Vitals via Playwright, and scores pages against SEO best practices.
+SEOmator is a comprehensive SEO audit tool (`@seomator/seo-audit`) with 251 rules across 20 categories. It ships as both a **CLI tool** (published to npm) and an **Electron desktop app** (local only). It fetches web pages, parses HTML with Cheerio, optionally measures Core Web Vitals via Puppeteer, and scores pages against SEO best practices.
 
 ## Critical Rules (read before making changes)
 
@@ -23,7 +23,7 @@ The `package.json` serves **both** the npm CLI package and the Electron desktop 
 
 ### Dependency Split: CLI vs Electron
 
-- **`dependencies`**: Only CLI packages (cheerio, commander, playwright, better-sqlite3, etc.). These are what npm users install.
+- **`dependencies`**: Only CLI packages (cheerio, commander, puppeteer, better-sqlite3, etc.). These are what npm users install.
 - **`devDependencies`**: Electron-only packages (react, react-dom, react-router-dom, recharts, zustand, electron, electron-vite, tailwindcss, etc.).
 - **Never move react/zustand/recharts/electron packages into `dependencies`** — npm users would download ~15MB of unused Electron UI code.
 
@@ -111,7 +111,7 @@ The entire audit engine is built on a **self-registering rule pattern**:
 Defined in `src/types.ts`. Every rule receives the same context object containing:
 - **Always available**: `url`, `html`, `$` (CheerioAPI), `headers`, `statusCode`, `responseTime`, `cwv`, `links`, `images`, `invalidLinks`, `specialLinks`, `figures`, `inlineSvgs`, `pictureElements`
 - **Tier 2 (network-fetched, optional)**: `robotsTxtContent`, `sitemapContent`, `sitemapUrls`, `redirectChain`
-- **Tier 4 (Playwright, optional)**: `renderedHtml`, `rendered$` (CheerioAPI of rendered DOM)
+- **Tier 4 (Puppeteer, optional)**: `renderedHtml`, `rendered$` (CheerioAPI of rendered DOM)
 
 ### Scoring Model
 
@@ -129,7 +129,7 @@ core(12%), perf(12%), links(8%), images(8%), security(8%), technical(7%), crawl(
 `Auditor` class (`src/auditor.ts`) orchestrates:
 1. `loadAllRules()` → triggers static imports
 2. `fetchPage()` → HTTP fetch + Cheerio parse → `AuditContext`
-3. (Optional) `fetchPageWithPlaywright()` → CWV metrics + rendered DOM
+3. (Optional) `fetchPageWithPuppeteer()` → CWV metrics + rendered DOM
 4. `enrichContext()` → fetches robots.txt + sitemap once per audit
 5. `runAllCategories()` → iterates categories → `getRulesByCategory()` → runs each rule
 6. `buildAuditResult()` → weighted scoring
@@ -178,7 +178,7 @@ The desktop app wraps the existing audit engine without modifying `src/`:
 - **tsup** for building (single ESM entry, `#!/usr/bin/env node` banner)
 - **vitest** for testing
 - **Cheerio** for HTML parsing
-- **Playwright** for CWV measurement and rendered DOM capture
+- **Puppeteer** for CWV measurement and rendered DOM capture
 - **better-sqlite3** for storage
 - **Commander** for CLI parsing
 - **chalk/ora/cli-table3/log-update** for terminal UI
