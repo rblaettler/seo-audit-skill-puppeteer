@@ -2,8 +2,10 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "functions": {
-    "api/audit.ts": {
-      "maxDuration": 60
-    }
+    "api/audit.ts": { "maxDuration": 60 },
+    "api/crawl.ts": { "maxDuration": 30 },
+    "api/crawl/worker.ts": { "maxDuration": 300 },
+    "api/crawl/status.ts": { "maxDuration": 30 },
+    "api/crawl/results.ts": { "maxDuration": 30 }
   }
 }

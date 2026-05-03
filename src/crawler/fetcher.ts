@@ -187,6 +187,18 @@ function extractLinks($: CheerioAPI, baseUrl: string): LinkExtractionResult {
 }
 
 /**
+ * Extract internal and external links from an HTML string.
+ * Useful for getting links out of Puppeteer-rendered HTML without a full fetchPage call.
+ * @param html - Raw HTML string (e.g. from page.content())
+ * @param baseUrl - Base URL for resolving relative links and determining internal/external
+ * @returns Array of LinkInfo objects
+ */
+export function extractLinksFromHtml(html: string, baseUrl: string): LinkInfo[] {
+  const $ = cheerio.load(html);
+  return extractLinks($, baseUrl).links;
+}
+
+/**
  * Validate email format (basic validation)
  */
 function isValidEmail(email: string): { isValid: boolean; issue?: string } {

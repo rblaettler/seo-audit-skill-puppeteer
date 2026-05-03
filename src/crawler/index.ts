@@ -3,6 +3,7 @@ export {
   fetchPage,
   fetchUrl,
   createAuditContext,
+  extractLinksFromHtml,
   type FetchResult,
 } from './fetcher.js';
 
