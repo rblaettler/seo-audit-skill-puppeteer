@@ -20,6 +20,7 @@ import { structuredDataProductRule } from './product.js';
 import { structuredDataReviewRule } from './review.js';
 import { structuredDataVideoRule } from './video.js';
 import { structuredDataWebsiteSearchRule } from './website-search.js';
+import { deprecatedSchemaRule } from './deprecated-schema.js';
 
 // Export all rules
 export {
@@ -36,6 +37,7 @@ export {
   structuredDataReviewRule,
   structuredDataVideoRule,
   structuredDataWebsiteSearchRule,
+  deprecatedSchemaRule,
 };
 
 // Register all rules
@@ -52,3 +54,4 @@ registerRule(structuredDataProductRule);
 registerRule(structuredDataReviewRule);
 registerRule(structuredDataVideoRule);
 registerRule(structuredDataWebsiteSearchRule);
+registerRule(deprecatedSchemaRule);

@@ -20,6 +20,7 @@ import { contentStructureRule } from './content-structure.js';
 import { aiBotAccessRule } from './ai-bot-access.js';
 import { llmsTxtRule } from './llms-txt.js';
 import { schemaDriftRule } from './schema-drift.js';
+import { aiPluginJsonRule } from './ai-plugin-json.js';
 
 // Export all rules
 export {
@@ -28,6 +29,7 @@ export {
   aiBotAccessRule,
   llmsTxtRule,
   schemaDriftRule,
+  aiPluginJsonRule,
 };
 
 // Register all rules
@@ -36,3 +38,4 @@ registerRule(contentStructureRule);
 registerRule(aiBotAccessRule);
 registerRule(llmsTxtRule);
 registerRule(schemaDriftRule);
+registerRule(aiPluginJsonRule);

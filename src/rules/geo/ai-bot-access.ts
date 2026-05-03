@@ -16,6 +16,10 @@ const AI_BOTS = [
   'Bytespider',
   'PerplexityBot',
   'Amazonbot',
+  'OAI-SearchBot',
+  'cohere-ai',
+  'Meta-ExternalAgent',
+  'DuckAssistBot',
 ] as const;
 
 /**
@@ -158,7 +162,7 @@ export const aiBotAccessRule = defineRule({
   id: 'geo-ai-bot-access',
   name: 'AI Bot Access',
   description:
-    'Checks if robots.txt blocks AI crawlers (GPTBot, ChatGPT-User, Google-Extended, Claude-Web, etc.)',
+    'Checks if robots.txt blocks AI crawlers (GPTBot, ChatGPT-User, Google-Extended, Claude-Web, OAI-SearchBot, DuckAssistBot, etc.)',
   category: 'geo',
   weight: 20,
   run: async (context: AuditContext) => {

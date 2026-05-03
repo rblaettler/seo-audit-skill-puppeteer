@@ -54,6 +54,7 @@ import {
   duplicateNearRule,
   resetNearDuplicateRegistry,
 } from './duplicate-near.js';
+import { contentFreshnessRule } from './content-freshness.js';
 
 // Export all rules
 export {
@@ -76,6 +77,7 @@ export {
   descriptionPixelWidthRule,
   duplicateExactRule,
   duplicateNearRule,
+  contentFreshnessRule,
 };
 
 // Export utility functions for duplicate description tracking
@@ -102,3 +104,4 @@ registerRule(titlePixelWidthRule);
 registerRule(descriptionPixelWidthRule);
 registerRule(duplicateExactRule);
 registerRule(duplicateNearRule);
+registerRule(contentFreshnessRule);
