@@ -35,6 +35,8 @@ export interface CoreWebVitals {
   fcp?: number;
   /** Interaction to Next Paint in milliseconds */
   inp?: number;
+  /** True when INP was measured via synthetic click simulation, not real user interaction */
+  inpSynthetic?: boolean;
 }
 
 /**

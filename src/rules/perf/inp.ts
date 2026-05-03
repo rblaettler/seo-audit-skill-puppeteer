@@ -25,58 +25,37 @@ export const inpRule = defineRule({
   run: async (context: AuditContext) => {
     const { cwv } = context;
     const inp = cwv.inp;
+    const synthetic = cwv.inpSynthetic ?? false;
+    const label = synthetic ? ' (synthetic measurement)' : '';
 
     if (inp === undefined) {
       return warn(
         'cwv-inp',
-        'Could not measure Interaction to Next Paint (no user interaction detected or metric not available)',
+        'Could not measure INP — no interactive elements found in viewport for synthetic testing',
         {
           metric: 'INP',
-          reason: 'No interaction or metric not available',
+          inpSynthetic: synthetic,
+          reason: 'No clickable elements found in viewport',
         }
       );
     }
 
+    const details = {
+      metric: 'INP',
+      value: inp,
+      valueFormatted: `${inp}ms`,
+      inpSynthetic: synthetic,
+      threshold: { good: INP_GOOD, poor: INP_POOR },
+    };
+
     if (inp < INP_GOOD) {
-      return pass('cwv-inp', `INP is ${inp}ms (good, under 200ms)`, {
-        metric: 'INP',
-        value: inp,
-        valueFormatted: `${inp}ms`,
-        threshold: {
-          good: INP_GOOD,
-          poor: INP_POOR,
-        },
-      });
+      return pass('cwv-inp', `INP is ${inp}ms — good${label}`, details);
     }
 
     if (inp <= INP_POOR) {
-      return warn(
-        'cwv-inp',
-        `INP is ${inp}ms (needs improvement, should be under 200ms)`,
-        {
-          metric: 'INP',
-          value: inp,
-          valueFormatted: `${inp}ms`,
-          threshold: {
-            good: INP_GOOD,
-            poor: INP_POOR,
-          },
-        }
-      );
+      return warn('cwv-inp', `INP is ${inp}ms — needs improvement${label}`, details);
     }
 
-    return fail(
-      'cwv-inp',
-      `INP is ${inp}ms (poor, should be under 200ms)`,
-      {
-        metric: 'INP',
-        value: inp,
-        valueFormatted: `${inp}ms`,
-        threshold: {
-          good: INP_GOOD,
-          poor: INP_POOR,
-        },
-      }
-    );
+    return fail('cwv-inp', `INP is ${inp}ms — poor${label}`, details);
   },
 });
