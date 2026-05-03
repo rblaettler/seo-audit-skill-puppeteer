@@ -1,5 +1,7 @@
 // Side-effect import: causes all 251 SEO rules to register at module init time
 import '../../src/rules/loader.js';
+// Side-effect import: registers all 5 cross-page rules
+import '../../src/rules/cross-page/index.js';
 
 import { Redis } from '@upstash/redis';
 import { waitUntil } from '@vercel/functions';
@@ -9,17 +11,22 @@ import { Auditor } from '../../src/auditor.js';
 import { buildAuditResult } from '../../src/scoring.js';
 import { categories } from '../../src/categories/index.js';
 import { UrlFilter } from '../../src/crawler/url-filter.js';
+import { analyzeSite } from '../../src/rules/cross-page/analyzer.js';
 import type { CategoryResult, LinkInfo } from '../../src/types.js';
+import type { CrossPagePageData } from '../../src/rules/cross-page/types.js';
 
 export const maxDuration = 300;
 
 const TTL = 86400;
-const TIME_BUDGET_MS = 250_000;
+const TIME_BUDGET_MS = 220_000; // leave ~80s headroom for cross-page analysis + browser close
 const PUPPETEER_DEADLINE_MS = 30_000;
 const AUDIT_DEADLINE_MS = 45_000;
 const FETCH_TIMEOUT_MS = 25_000;
 const PUPPETEER_FETCH_TIMEOUT_MS = 25_000;
 const CLOSE_BROWSER_SLACK_MS = 5_000;
+const ANALYSIS_RESERVE_MS = 20_000; // skip analysis if less than this remains
+
+const urlFilter = new UrlFilter();
 
 const NON_HTML_EXT =
   /\.(pdf|docx?|xlsx?|pptx?|zip|gz|tar|rar|7z|jpg|jpeg|png|gif|webp|avif|svg|ico|mp[34]|wav|avi|mov|woff2?|ttf|eot|otf|css|js|mjs|json|xml|csv|txt|sh|exe|dmg|pkg|deb|rpm|apk)$/i;
@@ -28,7 +35,7 @@ interface CrawlJob {
   jobId: string;
   startUrl: string;
   startHostname: string;
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'analyzing' | 'completed' | 'error';
   maxPages: number;
   maxDepth: number;
   totalQueued: number;
@@ -36,6 +43,8 @@ interface CrawlJob {
   createdAt: string;
   updatedAt: string;
   cwv: boolean;
+  siteScore?: number;
+  combinedScore?: number;
   error?: string;
 }
 
@@ -59,6 +68,12 @@ export interface PageResult {
   categoryResults: CategoryResult[];
   timestamp: string;
   timing: PageTiming;
+  // Per-page data used by cross-page analysis
+  internalLinks: string[];
+  title: string;
+  metaDescription: string;
+  canonical: string;
+  statusCode: number;
   error?: string;
 }
 
@@ -82,7 +97,6 @@ async function discoverAndEnqueueLinks(
 ): Promise<number> {
   if (currentDepth >= job.maxDepth || links.length === 0) return 0;
 
-  const urlFilter = new UrlFilter();
   let urlsQueued = 0;
 
   for (const link of links) {
@@ -96,9 +110,9 @@ async function discoverAndEnqueueLinks(
       continue;
     }
 
-    const normalized = urlFilter.normalizeUrl(link.href);
-
+    let normalized: string;
     try {
+      normalized = urlFilter.normalizeUrl(link.href);
       const linkHost = new URL(normalized).hostname;
       if (linkHost !== job.startHostname) continue;
     } catch {
@@ -119,6 +133,19 @@ async function discoverAndEnqueueLinks(
   }
 
   return urlsQueued;
+}
+
+function normalizeInternalLinks(links: LinkInfo[]): string[] {
+  const out: string[] = [];
+  for (const link of links) {
+    if (!link.isInternal) continue;
+    try {
+      out.push(urlFilter.normalizeUrl(link.href));
+    } catch {
+      out.push(link.href);
+    }
+  }
+  return out;
 }
 
 async function processPage(
@@ -144,7 +171,6 @@ async function processPage(
     const fetchStart = performance.now();
     const fetchResult = await fetchPage(url, FETCH_TIMEOUT_MS);
     timing.fetchMs = Math.round(performance.now() - fetchStart);
-    console.log(`[worker] step=fetch-done url=${url} fetchMs=${timing.fetchMs}`);
 
     const context = createAuditContext(url, fetchResult);
 
@@ -159,7 +185,6 @@ async function processPage(
       auditDeadline,
     ]);
     timing.auditMs = Math.round(performance.now() - auditStart);
-    console.log(`[worker] step=audit-done url=${url} auditMs=${timing.auditMs}`);
 
     const timestamp = new Date().toISOString();
     const auditResult = buildAuditResult(url, categoryResults, categories, timestamp, 1);
@@ -171,6 +196,11 @@ async function processPage(
       categoryResults: auditResult.categoryResults,
       timestamp,
       timing,
+      statusCode: context.statusCode,
+      title: context.$('title').first().text().trim(),
+      metaDescription: context.$('meta[name="description"]').attr('content') ?? '',
+      canonical: context.$('link[rel="canonical"]').attr('href') ?? '',
+      internalLinks: [], // set after link discovery below
     };
 
     if (job.cwv) {
@@ -188,22 +218,14 @@ async function processPage(
         const linkDiscoveryStart = performance.now();
         discoveredLinks = extractLinksFromHtml(pwResult.html, url);
         timing.linkDiscoveryMs = Math.round(performance.now() - linkDiscoveryStart);
-        console.log(
-          `[worker] step=puppeteer-done url=${url} links=${discoveredLinks.length} linkDiscoveryMs=${timing.linkDiscoveryMs}`
-        );
       } catch (err) {
         puppeteerFailed = true;
         console.error(`[worker] Puppeteer link extraction failed for ${url}:`, err);
         discoveredLinks = context.links;
       } finally {
         timing.puppeteerMs = Math.round(performance.now() - puppeteerStart);
-        console.log(`[worker] step=puppeteer-total url=${url} puppeteerMs=${timing.puppeteerMs}`);
       }
-      // Self-heal: if Puppeteer crashed, reset the singleton so the next page re-launches.
-      // Keep the browser alive across pages otherwise — the singleton in puppeteer-fetcher.ts
-      // means subsequent fetchPageWithPuppeteer() calls reuse the same Chrome instance.
       if (puppeteerFailed) {
-        console.log(`[worker] step=close-browser-reset url=${url}`);
         await Promise.race([
           closeBrowser().catch(() => {}),
           new Promise<void>(resolve => setTimeout(resolve, CLOSE_BROWSER_SLACK_MS)),
@@ -214,6 +236,8 @@ async function processPage(
       discoveredLinks = context.links;
       timing.linkDiscoveryMs = Math.round(performance.now() - linkDiscoveryStart);
     }
+
+    pageResult.internalLinks = normalizeInternalLinks(discoveredLinks);
   } catch (err: unknown) {
     console.error(`[worker] Failed to audit ${url}:`, err);
     pageResult = {
@@ -223,6 +247,11 @@ async function processPage(
       categoryResults: [],
       timestamp: new Date().toISOString(),
       timing,
+      statusCode: 0,
+      title: '',
+      metaDescription: '',
+      canonical: '',
+      internalLinks: [],
       error: err instanceof Error ? err.message : 'Fetch or audit failed',
     };
   }
@@ -230,16 +259,14 @@ async function processPage(
   timing.totalMs = Math.round(performance.now() - pageStart);
   pageResult.timing = timing;
   console.log(
-    `[worker] step=page-done url=${url} fetchMs=${timing.fetchMs} puppeteerMs=${timing.puppeteerMs} auditMs=${timing.auditMs} linkDiscoveryMs=${timing.linkDiscoveryMs} totalMs=${timing.totalMs}`
+    `[worker] step=page-done url=${url} score=${pageResult.overallScore} totalMs=${timing.totalMs}`
   );
 
-  console.log(`[worker] step=persist url=${url}`);
   const pipeline = redis.pipeline();
   pipeline.rpush(`crawl:results:${jobId}`, pageResult);
   pipeline.expire(`crawl:results:${jobId}`, TTL);
   await pipeline.exec();
 
-  console.log(`[worker] step=discover url=${url} links=${discoveredLinks.length}`);
   let urlsQueued = 0;
   try {
     urlsQueued = await discoverAndEnqueueLinks(redis, jobId, job, discoveredLinks, depth);
@@ -257,6 +284,71 @@ async function processPage(
   return updatedJob;
 }
 
+async function runCrossPageAnalysis(
+  redis: Redis,
+  jobId: string,
+  job: CrawlJob,
+  startTime: number
+): Promise<void> {
+  const elapsed = Date.now() - startTime;
+  if (maxDuration * 1000 - elapsed < ANALYSIS_RESERVE_MS) {
+    console.log(`[worker] step=analysis-skipped reason=time-budget elapsed=${elapsed}`);
+    await redis.set(
+      `crawl:job:${jobId}`,
+      { ...job, status: 'completed', updatedAt: new Date().toISOString() },
+      { ex: TTL }
+    );
+    return;
+  }
+
+  console.log(`[worker] step=analysis-start elapsed=${elapsed}`);
+  await redis.set(
+    `crawl:job:${jobId}`,
+    { ...job, status: 'analyzing', updatedAt: new Date().toISOString() },
+    { ex: TTL }
+  );
+
+  const allResults = (await redis.lrange<PageResult>(`crawl:results:${jobId}`, 0, -1)) ?? [];
+
+  const pages: CrossPagePageData[] = allResults.map(r => ({
+    url: r.url,
+    depth: r.depth,
+    overallScore: r.overallScore,
+    internalLinks: r.internalLinks ?? [],
+    title: r.title ?? '',
+    metaDescription: r.metaDescription ?? '',
+    canonical: r.canonical ?? '',
+    statusCode: r.statusCode ?? 0,
+    error: r.error,
+  }));
+
+  const validPages = pages.filter(p => !p.error);
+  const avgPageScore =
+    validPages.length > 0
+      ? Math.round(validPages.reduce((sum, p) => sum + p.overallScore, 0) / validPages.length)
+      : 0;
+
+  const siteAnalysis = analyzeSite(pages, avgPageScore);
+  console.log(
+    `[worker] step=analysis-done siteScore=${siteAnalysis.score} combined=${siteAnalysis.combinedScore}`
+  );
+
+  const pipeline = redis.pipeline();
+  pipeline.set(`crawl:site-analysis:${jobId}`, siteAnalysis, { ex: TTL });
+  pipeline.set(
+    `crawl:job:${jobId}`,
+    {
+      ...job,
+      status: 'completed',
+      siteScore: siteAnalysis.score,
+      combinedScore: siteAnalysis.combinedScore,
+      updatedAt: new Date().toISOString(),
+    },
+    { ex: TTL }
+  );
+  await pipeline.exec();
+}
+
 async function processQueue(
   redis: Redis,
   jobId: string,
@@ -264,10 +356,7 @@ async function processQueue(
   workerUrl: string
 ): Promise<void> {
   const startTime = Date.now();
-  const workerStartIso = new Date(startTime).toISOString();
-  console.log(
-    `[worker] step=worker-start jobId=${jobId} workerStart=${workerStartIso} createdAt=${initialJob.createdAt}`
-  );
+  console.log(`[worker] step=worker-start jobId=${jobId}`);
   let job = initialJob;
   let pagesThisInvocation = 0;
 
@@ -286,15 +375,8 @@ async function processQueue(
 
       const queueItem = await redis.lpop<QueueItem>(`crawl:queue:${jobId}`);
       if (!queueItem) {
-        const totalElapsedMs = Date.now() - new Date(job.createdAt).getTime();
-        console.log(
-          `[worker] step=loop-queue-empty pages=${pagesThisInvocation} totalElapsedMs=${totalElapsedMs}`
-        );
-        await redis.set(
-          `crawl:job:${jobId}`,
-          { ...job, status: 'completed', updatedAt: new Date().toISOString() },
-          { ex: TTL }
-        );
+        console.log(`[worker] step=loop-queue-empty pages=${pagesThisInvocation}`);
+        await runCrossPageAnalysis(redis, jobId, job, startTime);
         return;
       }
 
@@ -302,7 +384,7 @@ async function processQueue(
         job = await processPage(redis, job, jobId, queueItem.url, queueItem.depth);
         pagesThisInvocation++;
       } catch (err) {
-        console.error(`[worker] processPage threw unexpectedly for ${queueItem.url}:`, err);
+        console.error(`[worker] processPage threw for ${queueItem.url}:`, err);
         const failResult: PageResult = {
           url: queueItem.url,
           depth: queueItem.depth,
@@ -310,6 +392,11 @@ async function processQueue(
           categoryResults: [],
           timestamp: new Date().toISOString(),
           timing: { fetchMs: 0, puppeteerMs: 0, auditMs: 0, linkDiscoveryMs: 0, totalMs: 0 },
+          statusCode: 0,
+          title: '',
+          metaDescription: '',
+          canonical: '',
+          internalLinks: [],
           error: err instanceof Error ? err.message : 'Unhandled worker error',
         };
         try {
@@ -323,19 +410,16 @@ async function processQueue(
       }
     }
 
-    // Time budget hit. If queue still has items, hand off to a fresh invocation.
+    // Time budget hit — check if queue is now empty
     console.log(`[worker] step=time-budget-hit pages=${pagesThisInvocation}`);
     const queueLen = await redis.llen(`crawl:queue:${jobId}`);
     if (queueLen <= 0) {
-      await redis.set(
-        `crawl:job:${jobId}`,
-        { ...job, status: 'completed', updatedAt: new Date().toISOString() },
-        { ex: TTL }
-      );
+      await runCrossPageAnalysis(redis, jobId, job, startTime);
       return;
     }
 
-    console.log(`[worker] step=chain-handoff queueLen=${queueLen} workerUrl=${workerUrl}`);
+    // Queue still has items — chain to fresh invocation
+    console.log(`[worker] step=chain-handoff queueLen=${queueLen}`);
     try {
       const resp = await fetch(workerUrl, {
         method: 'POST',
@@ -343,9 +427,7 @@ async function processQueue(
         body: JSON.stringify({ jobId }),
       });
       await resp.body?.cancel();
-      if (resp.status >= 400) {
-        throw new Error(`Chain handoff returned ${resp.status}`);
-      }
+      if (resp.status >= 400) throw new Error(`Chain handoff returned ${resp.status}`);
       console.log(`[worker] step=chain-handoff-ok status=${resp.status}`);
     } catch (err) {
       console.error('[worker] Chain handoff failed:', err);
@@ -364,14 +446,11 @@ async function processQueue(
       }
     }
   } finally {
-    // Close the (possibly reused) browser exactly once per invocation.
-    // Race with a slack timer so a hung browser can't block waitUntil from completing.
     console.log(`[worker] step=close-browser-final pages=${pagesThisInvocation}`);
     await Promise.race([
       closeBrowser().catch(() => {}),
       new Promise<void>(resolve => setTimeout(resolve, CLOSE_BROWSER_SLACK_MS)),
     ]);
-    console.log(`[worker] step=close-browser-final-done`);
   }
 }
 
@@ -424,8 +503,6 @@ export default async function handler(
 
   const workerUrl = getWorkerUrl(req);
 
-  // Respond 202 immediately so the caller's waitUntil resolves in milliseconds.
-  // The loop runs in waitUntil and gets the full maxDuration to drain the queue.
   res.writeHead(202, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'accepted', jobId }));
 

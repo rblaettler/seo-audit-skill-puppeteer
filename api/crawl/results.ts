@@ -6,14 +6,31 @@ export const maxDuration = 30;
 interface CrawlJob {
   jobId: string;
   startUrl: string;
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'analyzing' | 'completed' | 'error';
   maxPages: number;
   maxDepth: number;
   totalQueued: number;
   completedPages: number;
   createdAt: string;
   updatedAt: string;
+  siteScore?: number;
+  combinedScore?: number;
   error?: string;
+}
+
+interface SiteAnalysis {
+  score: number;
+  combinedScore: number;
+  avgPageScore: number;
+  rules: Array<{
+    ruleId: string;
+    score: number;
+    status: string;
+    message: string;
+    details: unknown;
+  }>;
+  pageCount: number;
+  analyzedAt: string;
 }
 
 export default async function handler(
@@ -51,15 +68,17 @@ export default async function handler(
 
   const redis = new Redis({ url: redisUrl, token: redisToken });
 
-  const job = await redis.get<CrawlJob>(`crawl:job:${jobId}`);
+  const [job, siteAnalysis, results] = await Promise.all([
+    redis.get<CrawlJob>(`crawl:job:${jobId}`),
+    redis.get<SiteAnalysis>(`crawl:site-analysis:${jobId}`),
+    redis.lrange<PageResult>(`crawl:results:${jobId}`, 0, -1),
+  ]);
+
   if (!job) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Job not found' }));
     return;
   }
-
-  // Return full per-page audit results including all category and rule data
-  const results = (await redis.lrange<PageResult>(`crawl:results:${jobId}`, 0, -1)) ?? [];
 
   const endTime =
     job.status === 'completed' || job.status === 'error'
@@ -78,8 +97,11 @@ export default async function handler(
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       totalElapsedMs,
+      ...(job.siteScore !== undefined ? { siteScore: job.siteScore } : {}),
+      ...(job.combinedScore !== undefined ? { combinedScore: job.combinedScore } : {}),
       ...(job.error ? { error: job.error } : {}),
-      results,
+      ...(siteAnalysis ? { siteAnalysis } : {}),
+      results: results ?? [],
     })
   );
 }
