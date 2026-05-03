@@ -1,18 +1,19 @@
 # SEOmator Audit
 
-A comprehensive SEO audit tool with **251 audit rules** across **20 categories**. Available as both a **command-line tool** and an **Electron desktop app**. Analyze any website for SEO best practices, Core Web Vitals, security headers, structured data, accessibility, JavaScript rendering, redirect chains, and more.
+A comprehensive SEO audit tool with **253 audit rules** across **20 categories**. Available as both a **command-line tool** and an **Electron desktop app**. Analyze any website for SEO best practices, Core Web Vitals, security headers, structured data, accessibility, JavaScript rendering, redirect chains, and more.
 
 > **Prefer a web interface?** Try our [Free SEO Audit Tool](https://seomator.com/free-seo-audit-tool) for a visual, browser-based SEO analysis.
 
 ## Features
 
-- **251 SEO Audit Rules** across 20 categories
+- **253 SEO Audit Rules** across 20 categories (+ 6 cross-page rules run after full site crawl)
 - **Desktop App** - Visual audit dashboard with real-time progress, interactive results, score history, and light/dark theme
 - **CLI Tool** - Single page & crawl mode with 5 output formats
 - **Core Web Vitals** - LCP, CLS, FCP, TTFB, INP measurement via Playwright
 - **JavaScript Rendering Analysis** - Compare raw vs rendered DOM for SPA/CSR sites
 - **5 Output Formats** - Console, JSON, HTML, Markdown, and LLM-optimized XML
-- **AI/GEO Readiness** - Check semantic HTML, AI bot access, and llms.txt
+- **AI/GEO Readiness** - Check semantic HTML, 13 AI bot access rules, llms.txt fetch, ai-plugin.json
+- **Multi-Page Crawl API** - REST API on Vercel with async job queue (Upstash Redis), cross-page analysis, `siteScore`, and combined score
 - **Redirect Chain Detection** - Loops, broken redirects, meta/JS redirects
 - **HTML Validation** - Doctype, charset, head structure, lorem ipsum detection
 - **Cross-Page Analysis** - Duplicate content detection, orphan pages, pagination
@@ -211,7 +212,33 @@ seomator self doctor -v          # Verbose diagnostics
 | 1 | Audit failed (score < 70) |
 | 2 | Error occurred |
 
-## Categories & Rules (251 total)
+## REST API (Vercel Deployment)
+
+When deployed to Vercel, SEOmator exposes a REST API backed by Upstash Redis for async crawl jobs.
+
+```bash
+# Single-page audit (synchronous)
+GET /api/audit?url=https://example.com&cwv=true
+
+# Start multi-page crawl
+POST /api/crawl
+{ "url": "https://example.com", "maxPages": 20, "maxDepth": 2, "cwv": true }
+→ { "jobId": "abc123", "status": "queued" }
+
+# Poll progress
+GET /api/crawl/status?jobId=abc123
+→ { "status": "running", "pagesVisited": 8, "avgPageScore": 82 }
+
+# Get full results (when status = "completed")
+GET /api/crawl/results?jobId=abc123
+→ { "pages": [...], "siteAnalysis": { "score": 74, "combinedScore": 79, "rules": [...] } }
+```
+
+**Cross-page analysis** runs automatically after the crawl queue drains, checking 6 site-level rules (broken internal links, duplicate titles, orphan pages, link graph health, canonical conflicts, sitemap coverage). The final score is `0.70 × avgPageScore + 0.30 × siteScore`.
+
+**Requires:** `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` environment variables.
+
+## Categories & Rules (253 total)
 
 ### Core (19 rules) - 12% weight
 
@@ -386,6 +413,7 @@ seomator self doctor -v          # Verbose diagnostics
 | `schema-review` | Validates Review/AggregateRating schema |
 | `schema-video` | Validates VideoObject schema |
 | `schema-website-search` | Checks WebSite sitelinks searchbox |
+| `schema-deprecated` | Detects deprecated schema types (HowTo, FAQPage, BookAction, etc.) |
 
 ### JavaScript Rendering (13 rules) - 5% weight
 
@@ -443,6 +471,7 @@ seomator self doctor -v          # Verbose diagnostics
 | `content-description-pixel-width` | Description pixel width for SERP (<920px) |
 | `content-duplicate-exact` | Detects exact duplicate content across pages |
 | `content-duplicate-near` | Detects near-duplicate content via simhash |
+| `content-freshness` | Checks dateModified/datePublished signals; warns if content >12 months old |
 
 ### Social (9 rules) - 3% weight
 
@@ -548,15 +577,27 @@ seomator self doctor -v          # Verbose diagnostics
 | `htmlval-multiple-titles` | Single `<title>` tag only |
 | `htmlval-multiple-descriptions` | Single meta description only |
 
-### AI/GEO Readiness (5 rules) - 2% weight
+### AI/GEO Readiness (6 rules) - 2% weight
 
 | Rule | Description |
 |------|-------------|
 | `geo-semantic-html` | Uses semantic HTML elements |
 | `geo-content-structure` | Proper heading hierarchy and lists |
-| `geo-ai-bot-access` | AI crawlers (GPTBot, ClaudeBot) not blocked |
-| `geo-llms-txt` | /llms.txt file for AI discovery |
+| `geo-ai-bot-access` | 13 AI crawlers (GPTBot, Claude-Web, anthropic-ai, Google-Extended, CCBot, Bytespider, PerplexityBot, Amazonbot, OAI-SearchBot, cohere-ai, Meta-ExternalAgent, DuckAssistBot, ChatGPT-User) not blocked |
+| `geo-llms-txt` | Fetches `/llms.txt` and `/.well-known/llms.txt` to verify file exists |
 | `geo-schema-drift` | JSON-LD matches visible content |
+| `geo-ai-plugin-json` | `/.well-known/ai-plugin.json` present and valid JSON |
+
+### Cross-Page Analysis (6 rules — post-crawl, separate scoring)
+
+| Rule | Description |
+|------|-------------|
+| `cross-page/broken-internal-links` | Internal links returning 4xx/5xx across the site |
+| `cross-page/duplicate-titles` | Pages sharing identical `<title>` tags |
+| `cross-page/orphan-pages` | Crawled pages with no incoming internal links |
+| `cross-page/link-graph-health` | Average internal links per page, dead-end page ratio |
+| `cross-page/canonical-conflicts` | Pages with conflicting canonical signals |
+| `cross-page/sitemap-coverage` | Sitemap vs crawled URL coverage comparison |
 
 ### Legal Compliance (1 rule) - 1% weight
 

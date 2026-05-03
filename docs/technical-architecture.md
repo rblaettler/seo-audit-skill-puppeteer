@@ -45,7 +45,7 @@ This document explains the internal architecture of SEOmator, covering data flow
          ┌─────────────────────────────────┐      │
          │           Auditor               │      │
          │     (src/auditor.ts)            │      │
-         │     148 Rules × N Pages         │      │
+         │     253 Rules × N Pages         │      │
          └─────────────┬───────────────────┘      │
                        │                          │
                        ▼                          │
@@ -169,22 +169,25 @@ src/crawler/
 - **Domain restriction:** Stays within configured domains
 - **Budget control:** `max_prefix_budget` prevents over-crawling single paths
 
-#### Fetcher (`fetcher.ts`)
+#### Fetcher (`fetcher.ts` / `puppeteer-fetcher.ts`)
 
 Two modes:
 1. **HTTP-only** (fast): Node.js fetch for HTML
-2. **Playwright** (CWV): Launches browser for Core Web Vitals
+2. **Puppeteer** (CWV): Launches Chrome for Core Web Vitals + synthetic INP
 
 ```typescript
-// Playwright metrics collected:
+// Metrics collected via Puppeteer:
 interface CoreWebVitals {
-  lcp: number;   // Largest Contentful Paint
-  fcp: number;   // First Contentful Paint
-  cls: number;   // Cumulative Layout Shift
-  ttfb: number;  // Time to First Byte
-  inp: number;   // Interaction to Next Paint
+  lcp?: number;         // Largest Contentful Paint (PerformanceObserver)
+  fcp?: number;         // First Contentful Paint (paint entries)
+  cls?: number;         // Cumulative Layout Shift (PerformanceObserver)
+  ttfb?: number;        // Time to First Byte (navigation timing)
+  inp?: number;         // Interaction to Next Paint (synthetic — see below)
+  inpSynthetic?: boolean; // Always true when INP is measured
 }
 ```
+
+**Synthetic INP measurement:** After passive metrics are collected, SEOmator auto-discovers up to 5 visible interactive elements in the viewport (buttons, `[role="button"]`, inputs, selects), simulates clicks via `page.mouse.click()`, and reads the p98 interaction duration from a `PerformanceObserver({ type: 'event' })`. Link navigation and form submissions are prevented during the interaction phase. See [Synthetic INP Measurement](#synthetic-inp-measurement).
 
 ### 4. Storage System (`src/storage/`)
 
@@ -549,7 +552,7 @@ User runs: seomator audit https://example.com --crawl -m 10
    └── Mark crawl complete
 
 3. AUDITING
-   ├── Load enabled rules (148 total, filtered by config)
+   ├── Load enabled rules (253 total, filtered by config)
    ├── For each page:
    │   ├── Build AuditContext {url, $, headers, cwv}
    │   ├── Run each rule → RuleResult
@@ -571,14 +574,201 @@ User runs: seomator audit https://example.com --crawl -m 10
    └── Return exit code (0=pass, 1=fail, 2=error)
 ```
 
+## REST API (Vercel)
+
+SEOmator is deployed as a set of Vercel serverless functions under `api/`. The Vercel deployment uses Upstash Redis for job state and queue management.
+
+### Endpoints
+
+#### `GET /api/audit`
+Single-page audit. Accepts a `url` query param plus optional `cwv=true`. Returns the full `AuditResult` JSON synchronously (cold start included).
+
+#### `POST /api/crawl`
+Starts a multi-page crawl job.
+
+| Parameter | Type | Default | Max | Description |
+|-----------|------|---------|-----|-------------|
+| `url` | string | — | — | Starting URL (required) |
+| `maxPages` | number | 1 | 500 | Maximum pages to crawl |
+| `maxDepth` | number | 0 | — | Max link depth from start URL (0 = unlimited) |
+| `cwv` | boolean | false | — | Enable Puppeteer CWV + INP measurement per page |
+
+Returns `{ jobId, status: "queued" }` immediately (202). The crawl runs asynchronously.
+
+#### `POST /api/crawl/worker` (internal)
+Internal endpoint invoked by the job system. Processes the URL queue in a loop until empty or time budget exhausted. Not for external use.
+
+#### `GET /api/crawl/status?jobId=`
+Poll crawl progress. Returns:
+```json
+{
+  "jobId": "...",
+  "status": "running | analyzing | completed | failed",
+  "pagesQueued": 12,
+  "pagesVisited": 8,
+  "avgPageScore": 82,
+  "siteScore": 74,
+  "combinedScore": 79,
+  "timing": { "totalElapsedMs": 14200 },
+  "siteAnalysis": { ... }   // present when status = "completed"
+}
+```
+
+#### `GET /api/crawl/results?jobId=`
+Full results after crawl completes. Returns all `PageResult` objects plus `siteAnalysis`.
+
+### Redis Key Schema
+
+| Key | Type | Contents |
+|-----|------|----------|
+| `crawl:job:{jobId}` | string (JSON) | `CrawlJob` — status, counts, scores, timing |
+| `crawl:queue:{jobId}` | list | Pending URLs |
+| `crawl:visited:{jobId}` | set | Visited URLs |
+| `crawl:results:{jobId}` | list | `PageResult` JSON per page |
+| `crawl:site-analysis:{jobId}` | string (JSON) | `SiteAnalysis` (after analysis phase) |
+
+All keys have a 2-hour TTL.
+
+### Worker Loop Design
+
+The worker uses a loop-based drain (not per-page chaining) to process the queue within a single Vercel invocation:
+
+```
+while (queue not empty && time < TIME_BUDGET_MS) {
+  url = dequeue()
+  result = fetchAndAudit(url)
+  store(result)
+  enqueue(discoveredLinks)
+}
+
+if (time < ANALYSIS_RESERVE_MS && queue empty) {
+  runCrossPageAnalysis()
+  status = "completed"
+} else if (queue not empty) {
+  invokeNextWorker()  // chain to fresh invocation
+}
+```
+
+`TIME_BUDGET_MS = 220_000ms`, `ANALYSIS_RESERVE_MS = 20_000ms`, Vercel maxDuration = 300s.
+
+---
+
+## Cross-Page Analysis
+
+After the crawl queue drains, the worker runs a second phase: **cross-page analysis**. This analyzes the entire crawled site as a graph rather than evaluating pages individually.
+
+```
+PageResult[] (from Redis)
+       │
+       ▼
+analyzeSite(pages, avgPageScore)
+       │
+       ├─ broken-internal-links
+       ├─ duplicate-titles
+       ├─ orphan-pages
+       ├─ link-graph-health
+       ├─ canonical-conflicts
+       └─ sitemap-coverage  (fetches robots.txt + sitemap XML)
+       │
+       ▼
+SiteAnalysis { score, combinedScore, rules[] }
+       │
+       ▼
+Redis: crawl:site-analysis:{jobId}
+```
+
+### SiteAnalysis Response Shape
+
+```typescript
+interface SiteAnalysis {
+  score: number;          // 0–100, weighted average of cross-page rule results
+  combinedScore: number;  // 0.70 × avgPageScore + 0.30 × score
+  avgPageScore: number;   // Average per-page score from auditor
+  pageCount: number;
+  analyzedAt: string;     // ISO timestamp
+  rules: CrossPageRuleResult[];  // One entry per cross-page rule
+}
+```
+
+`siteAnalysis` is included in both `/api/crawl/status` and `/api/crawl/results` responses once the crawl reaches `completed` status.
+
+---
+
+## Synthetic INP Measurement
+
+Standard Puppeteer captures LCP, FCP, CLS, and TTFB passively via `PerformanceObserver` with `buffered: true`. INP cannot be captured passively — it requires user interaction.
+
+### How it works
+
+After passive metrics are collected, `measureINPWithInteractions(page)` runs:
+
+1. **Observer setup** — `page.evaluate` injects a `PerformanceObserver({ type: 'event', buffered: true })` that accumulates all interaction durations ≥ 40ms into `window.__INP_INTERACTIONS`. The p98 value is continuously updated in `window.__INP_VALUE`.
+
+2. **Navigation prevention** — Capture-phase `click` listener added to prevent link navigation. `submit` listener added to prevent form submission. Both added before clicking.
+
+3. **Element discovery** — `page.evaluate` queries visible, in-viewport elements matching these selectors (in priority order):
+   - `button:not([disabled])`
+   - `[role="button"]`, `[role="tab"]`
+   - `input[type="checkbox"]`, `input[type="radio"]`, `input[type="text"]`, `input[type="search"]`
+   - `select`, `textarea`
+   - `[onclick]:not(a)`
+   
+   Returns at most 5 `{ x, y }` center coordinates.
+
+4. **Interaction simulation** — `page.mouse.click(x, y, { delay: 50 })` per element, 200ms between clicks. Each wrapped in try/catch.
+
+5. **Settle + read** — 500ms wait, then `page.evaluate` reads `window.__INP_VALUE`.
+
+If no interactive elements are found, `inp` remains `undefined` and the `cwv-inp` rule warns instead of measuring. The `inpSynthetic: true` flag is always set in the rule details when INP is reported.
+
+---
+
+## Browser Reuse
+
+In the Vercel worker, the Puppeteer browser is launched once per worker invocation and reused across all pages processed in that invocation:
+
+```typescript
+// puppeteer-fetcher.ts
+let browserPromise: Promise<Browser> | null = null;
+
+export async function initBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = puppeteer.launch({...});
+  }
+  return browserPromise;
+}
+```
+
+Each page gets a fresh `browser.newPage()` and the page is closed after fetching. The browser process itself persists, eliminating the ~2-3s Chrome startup cost for every page after the first.
+
+---
+
+## Timing Instrumentation
+
+Each `PageResult` includes per-phase timing:
+
+| Field | Description |
+|-------|-------------|
+| `fetchMs` | Time to fetch the page (HTTP or Puppeteer load) |
+| `puppeteerMs` | Additional Puppeteer time (CWV collection + INP simulation) |
+| `auditMs` | Time to run all 253 audit rules against the page |
+| `linkDiscoveryMs` | Time to extract and filter internal links |
+| `totalMs` | Sum of all phases for this page |
+
+The job-level `timing.totalElapsedMs` tracks wall-clock time from job start to last page completion.
+
+---
+
 ## External Dependencies
 
 | Dependency | Purpose |
 |------------|---------|
 | `commander` | CLI argument parsing |
 | `cheerio` | HTML parsing (jQuery-like) |
-| `playwright` | Browser automation for CWV |
-| `better-sqlite3` | SQLite database |
+| `puppeteer-core` + `@sparticuz/chromium` | Browser automation for CWV + synthetic INP |
+| `better-sqlite3` | SQLite database (CLI/desktop mode) |
+| `@upstash/redis` | Job queue and result storage (Vercel crawl mode) |
+| `@vercel/functions` | `waitUntil` for background crawl processing |
 | `chalk` | Terminal colors |
 | `cli-progress` | Progress bars |
 | `ora` | Spinners |
@@ -657,5 +847,5 @@ export function generateMyReport(report: AuditReport): string {
 ## Next Steps
 
 - [Configuration](./configuration.md) - Config options reference
-- [SEO Audit Rules](./SEO-AUDIT-RULES.md) - All 148 rules
+- [SEO Audit Rules](./SEO-AUDIT-RULES.md) - All 253 per-page rules + 6 cross-page rules
 - [Storage Architecture](./STORAGE-ARCHITECTURE.md) - Database details

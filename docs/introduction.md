@@ -2,7 +2,7 @@
 
 > CLI Website Audits for Humans, Agents & LLMs
 
-A comprehensive SEO audit tool with **148 rules** across **16 categories** that fits into your AI workflow. Built with Node.js, works with your system browser.
+A comprehensive SEO audit tool with **253 rules** across **20 categories** that fits into your AI workflow. Built with Node.js, works with your system browser.
 
 ## Quick Links
 
@@ -91,25 +91,29 @@ Console, JSON, HTML reports, Markdown, LLM-friendly output. Export exactly what 
 
 ## Rule Categories
 
-SEOmator runs **148 rules** across **16 categories**:
+SEOmator runs **253 rules** across **20 categories** (+ 6 cross-page rules run after full site crawl):
 
 | Category | Weight | Rules | Description |
 |----------|--------|-------|-------------|
-| **Core** | 14% | 14 | Meta tags, canonical, H1, indexing |
-| **Performance** | 14% | 12 | Core Web Vitals + performance hints |
-| **Links** | 9% | 13 | Internal/external links |
-| **Images** | 9% | 12 | Image optimization |
-| **Security** | 9% | 12 | HTTPS, headers, mixed content |
-| **Technical SEO** | 8% | 8 | Robots.txt, sitemap, SSL |
-| **Crawlability** | 6% | 6 | Sitemap, indexability signals |
-| **Structured Data** | 5% | 13 | JSON-LD, Schema.org |
-| **Accessibility** | 5% | 12 | WCAG, ARIA compliance |
-| **Content** | 5% | 11 | Text quality, readability, headings |
-| **Social** | 4% | 9 | Open Graph, Twitter Cards |
-| **E-E-A-T** | 4% | 14 | Trust signals, expertise |
-| **URL Structure** | 3% | 2 | Slug keywords, stop words |
-| **Mobile** | 3% | 3 | Font size, horizontal scroll |
-| **Internationalization** | 1% | 2 | Language, hreflang |
+| **Core SEO** | 12% | 19 | Meta tags, canonical, H1, indexing directives |
+| **Performance** | 12% | 22 | Core Web Vitals + performance optimization hints |
+| **Links** | 8% | 19 | Internal/external links, anchor text, validation |
+| **Images** | 8% | 14 | Alt text, dimensions, lazy loading, optimization |
+| **Security** | 8% | 16 | HTTPS, security headers, mixed content, SSL |
+| **Technical SEO** | 7% | 13 | Robots.txt, sitemap, status codes, URL structure |
+| **Crawlability** | 5% | 18 | Indexability signals, sitemap conflicts, pagination |
+| **Structured Data** | 5% | 14 | JSON-LD, Schema.org markup |
+| **Content** | 5% | 18 | Text quality, readability, headings, freshness |
+| **JavaScript Rendering** | 5% | 13 | SSR validation, JS-dependent SEO elements |
+| **Accessibility** | 4% | 12 | WCAG compliance, ARIA, keyboard navigation |
+| **Social** | 3% | 9 | Open Graph, Twitter Cards, social profiles |
+| **E-E-A-T** | 3% | 14 | Experience, Expertise, Authority, Trust signals |
+| **URL Structure** | 3% | 14 | Slug keywords, formatting, parameters |
+| **Redirects** | 3% | 8 | Redirect types, chains, loops |
+| **Mobile** | 2% | 5 | Font size, viewport, responsive layout |
+| **Internationalization** | 2% | 10 | Language declarations, hreflang validation |
+| **HTML Validation** | 2% | 9 | DOCTYPE, charset, head structure |
+| **AI/GEO Readiness** | 2% | 6 | Semantic HTML, 13 AI bots, llms.txt, ai-plugin.json |
 | **Legal Compliance** | 1% | 1 | Cookie consent |
 
 ## Resources

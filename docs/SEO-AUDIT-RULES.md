@@ -1,10 +1,10 @@
 # SEO Audit Rules Reference
 
-> Complete reference of all 251 SEO audit rules across 20 categories (v3.0.0)
+> Complete reference of all 253 per-page SEO audit rules + 6 cross-page analysis rules across 20 categories (v4.0.0)
 
 ## Overview
 
-SEOmator audits websites using 251 rules organized into 20 categories. Each rule returns one of three statuses:
+SEOmator audits websites using 253 rules organized into 20 categories. Each rule returns one of three statuses:
 - **Pass** (score: 100) - Meets best practices
 - **Warn** (score: 50) - Potential issue, should address
 - **Fail** (score: 0) - Critical issue, must fix
@@ -22,8 +22,8 @@ SEOmator audits websites using 251 rules organized into 20 categories. Each rule
 | [Security](#security) | 8% | 16 | HTTPS, security headers, mixed content, SSL |
 | [Technical SEO](#technical-seo) | 7% | 13 | Robots.txt, sitemap, status codes, URL structure |
 | [Crawlability](#crawlability) | 5% | 18 | Indexability signals, sitemap conflicts, pagination |
-| [Structured Data](#structured-data) | 5% | 13 | JSON-LD, Schema.org markup |
-| [Content](#content) | 5% | 17 | Text quality, readability, headings, duplicates |
+| [Structured Data](#structured-data) | 5% | 14 | JSON-LD, Schema.org markup |
+| [Content](#content) | 5% | 18 | Text quality, readability, headings, duplicates, freshness |
 | [JavaScript Rendering](#javascript-rendering) | 5% | 13 | SSR validation, JS-dependent SEO elements |
 | [Accessibility](#accessibility) | 4% | 12 | WCAG compliance, ARIA, keyboard navigation |
 | [Social](#social) | 3% | 9 | Open Graph, Twitter Cards, social profiles |
@@ -33,10 +33,10 @@ SEOmator audits websites using 251 rules organized into 20 categories. Each rule
 | [Mobile](#mobile) | 2% | 5 | Font size, viewport, responsive layout |
 | [Internationalization](#internationalization) | 2% | 10 | Language declarations, hreflang validation |
 | [HTML Validation](#html-validation) | 2% | 9 | DOCTYPE, charset, head structure |
-| [AI/GEO Readiness](#aigeo-readiness) | 2% | 5 | Semantic HTML, AI bot access, llms.txt |
+| [AI/GEO Readiness](#aigeo-readiness) | 2% | 6 | Semantic HTML, AI bot access, llms.txt, ai-plugin.json |
 | [Legal Compliance](#legal-compliance) | 1% | 1 | Cookie consent |
 
-**Total: 100% weight, 251 rules**
+**Total: 100% weight, 253 per-page rules** (+ 6 cross-page rules run after full site crawl — see [Cross-Page Analysis](#cross-page-analysis))
 
 ---
 
@@ -177,13 +177,17 @@ Core Web Vitals measurements and static performance optimization hints.
 
 ### Rule Details
 
-#### cwv-lcp / cwv-cls / cwv-inp / cwv-ttfb / cwv-fcp
-- **Measured in real browser** using Chrome/Chromium. Skip with `--no-cwv`.
+#### cwv-lcp / cwv-cls / cwv-ttfb / cwv-fcp
+- **Measured in real browser** using Chrome/Chromium via Puppeteer. Skip with `--no-cwv`.
 - **Fix LCP:** Optimize largest image, use CDN, preload LCP element
 - **Fix CLS:** Set image dimensions, avoid inserting content above existing
-- **Fix INP:** Optimize JavaScript, break up long tasks
 - **Fix TTFB:** Use CDN, optimize server, enable caching
 - **Fix FCP:** Reduce render-blocking resources, inline critical CSS
+
+#### cwv-inp
+- **Measurement:** Synthetic — after page load, SEOmator auto-discovers up to 5 visible interactive elements (buttons, inputs, `[role="button"]`, etc.) in the viewport and simulates clicks using Puppeteer. A `PerformanceObserver` with `type: 'event'` captures the duration of each interaction. INP is reported as the p98 duration across all interactions. If no interactive elements are found, the rule warns instead of measuring.
+- **Thresholds:** Good < 200ms · Needs Improvement 200–500ms · Poor > 500ms
+- **Fix INP:** Break up long-running JavaScript event handlers. Use `scheduler.yield()` or `setTimeout(0)` to defer non-critical work. Avoid synchronous DOM operations in click handlers.
 
 #### perf-dom-size
 - **Thresholds:** <800 nodes pass, 800-1500 warn, >1500 fail; depth >32 warn
@@ -558,6 +562,7 @@ Checks for valid JSON-LD, Schema.org markup, and rich snippet eligibility.
 | `schema-review` | Review Schema | warn | Validates Review/AggregateRating |
 | `schema-video` | Video Schema | warn | Validates VideoObject |
 | `schema-website-search` | WebSite Search | info | Checks sitelinks searchbox eligibility |
+| `schema-deprecated` | Deprecated Schema | warn | Detects schema types Google no longer supports for rich results |
 
 ### Rule Details
 
@@ -597,6 +602,12 @@ Checks for valid JSON-LD, Schema.org markup, and rich snippet eligibility.
 #### schema-website-search
 - **Fix:** Add WebSite schema with SearchAction and target containing `{search_term_string}`.
 
+#### schema-deprecated
+- **Deprecated types checked:** `HowTo` (removed 2024), `FAQPage` (removed 2023, limited to gov/health sites), `BookAction`, `SpecialAnnouncement` (COVID-era, retired), `ClaimReview` (limited support)
+- **Pass:** None of the deprecated types found.
+- **Warn:** Lists which deprecated types were detected and why they no longer generate rich results.
+- **Fix:** Remove deprecated schema types or replace them with currently supported alternatives. They waste crawl budget and no longer generate rich results in Google Search.
+
 ---
 
 ## Content
@@ -622,6 +633,7 @@ Analyzes text quality, readability, headings, and duplicate content.
 | `content-description-pixel-width` | Description Pixel Width | warn | Checks description fits SERP pixel limit |
 | `content-duplicate-exact` | Exact Duplicate | fail | Detects pages with identical content (crawl mode) |
 | `content-duplicate-near` | Near Duplicate | warn | Detects pages with very similar content (crawl mode) |
+| `content-freshness` | Content Freshness | warn | Checks date signals to detect stale content (>12 months old) |
 
 ### Rule Details
 
@@ -669,6 +681,13 @@ Analyzes text quality, readability, headings, and duplicate content.
 
 #### content-duplicate-description
 - **Fix:** Write unique, compelling descriptions (120-160 chars) for each page.
+
+#### content-freshness
+- **Signals checked (in priority order):** JSON-LD `dateModified`, JSON-LD `datePublished`, `article:modified_time` OG meta, `article:published_time` OG meta, `Last-Modified` HTTP header.
+- **Pass:** Most recent date signal is within 12 months.
+- **Warn:** Most recent date signal is older than 12 months — reports age in months.
+- **Warn:** No date signals found at all — add `dateModified` to Article schema.
+- **Fix:** Update `dateModified` in your Article schema to reflect when the content was last meaningfully revised. Also review whether the content itself needs refreshing.
 
 ---
 
@@ -1115,15 +1134,16 @@ Validates HTML document structure, DOCTYPE, charset, and common markup issues.
 
 ## AI/GEO Readiness
 
-Checks for Generative Engine Optimization: semantic HTML, content structure, and AI bot accessibility.
+Checks for Generative Engine Optimization (GEO): semantic HTML, content structure, AI bot accessibility, llms.txt, and OpenAI plugin manifest.
 
 | Rule ID | Name | Severity | Description |
 |---------|------|----------|-------------|
 | `geo-semantic-html` | Semantic HTML | warn | Checks for semantic HTML5 elements |
 | `geo-content-structure` | Content Structure | warn | Checks content is well-structured for extraction |
-| `geo-ai-bot-access` | AI Bot Access | warn | Checks AI crawlers are not blocked |
-| `geo-llms-txt` | llms.txt | info | Checks for llms.txt file for AI guidance |
+| `geo-ai-bot-access` | AI Bot Access | warn | Checks 13 known AI crawlers are not blocked in robots.txt |
+| `geo-llms-txt` | llms.txt | warn | Fetches `/llms.txt` and `/.well-known/llms.txt` to verify file exists and is non-empty |
 | `geo-schema-drift` | Schema Drift | warn | Checks schema markup matches actual content |
+| `geo-ai-plugin-json` | AI Plugin Manifest | info | Checks for `/.well-known/ai-plugin.json` (OpenAI plugin descriptor) |
 
 ### Rule Details
 
@@ -1134,13 +1154,24 @@ Checks for Generative Engine Optimization: semantic HTML, content structure, and
 - **Fix:** Organize content with clear headings, lists, tables, and paragraphs. Use definition lists for Q&A content.
 
 #### geo-ai-bot-access
-- **Fix:** Allow AI crawlers (GPTBot, Claude-Web, Anthropic, Google-Extended) in robots.txt unless you have specific reasons to block them.
+- **Checks robots.txt for blocks on 13 AI crawlers:** `GPTBot`, `ChatGPT-User`, `Google-Extended`, `CCBot`, `anthropic-ai`, `Claude-Web`, `Bytespider`, `PerplexityBot`, `Amazonbot`, `OAI-SearchBot`, `cohere-ai`, `Meta-ExternalAgent`, `DuckAssistBot`
+- **Pass:** All 13 bots are allowed (or robots.txt not present).
+- **Warn:** One or more AI crawlers are blocked — lists which ones.
+- **Fix:** Add `Allow: /` for AI crawlers in robots.txt, or remove `Disallow: /` rules targeting them.
 
 #### geo-llms-txt
-- **Fix:** Add a `/llms.txt` file describing your site's content and structure for AI systems. See llmstxt.org.
+- **How it works:** Fetches `{origin}/llms.txt` then `{origin}/.well-known/llms.txt`. Returns pass if either URL returns a non-empty response. Returns warn if an HTML `<link>` reference to an llms.txt is found but the file is missing. Returns warn if neither is found.
+- **Fix:** Create `/llms.txt` at your site root describing your content, purpose, and preferred citation format. See [llmstxt.org](https://llmstxt.org).
 
 #### geo-schema-drift
 - **Fix:** Ensure structured data (schema.org) accurately reflects the visible page content. Don't include schema for content that doesn't exist on the page.
+
+#### geo-ai-plugin-json
+- **How it works:** Fetches `{origin}/.well-known/ai-plugin.json` with an 8-second timeout.
+- **Pass:** File found and contains valid JSON.
+- **Warn (invalid):** File found but contains malformed JSON — fix the syntax.
+- **Warn (not found):** File not present — informational only, not required.
+- **Fix:** Add a valid `ai-plugin.json` descriptor if you want your site to be discoverable as an OpenAI/ChatGPT plugin or AI tool integration.
 
 ---
 
@@ -1159,6 +1190,64 @@ Privacy and legal compliance signals.
 - **Pass:** Cookie consent mechanism detected, or no tracking scripts present.
 - **Warn:** Tracking scripts detected but no cookie consent mechanism found.
 - **Fix:** Add a cookie consent banner using CookieYes, OneTrust, or Cookiebot.
+
+---
+
+## Cross-Page Analysis
+
+Cross-page rules run **after the full site crawl completes**, analyzing relationships between pages rather than a single page in isolation. They are a separate system from the 253 per-page rules and contribute to a **site-level score** that is blended with the per-page average.
+
+### Scoring
+
+```
+combinedScore = 0.70 × avgPageScore + 0.30 × siteScore
+```
+
+`siteScore` is the weighted average of all cross-page rule results. `combinedScore` is returned in the crawl API response alongside `siteScore` and the per-page `avgPageScore`.
+
+### Rules
+
+| Rule ID | Weight | Description |
+|---------|--------|-------------|
+| `cross-page/broken-internal-links` | 25 | Finds internal links that return 4xx/5xx across all crawled pages |
+| `cross-page/duplicate-titles` | 20 | Detects pages sharing identical `<title>` tags |
+| `cross-page/orphan-pages` | 20 | Finds crawled pages with no incoming internal links |
+| `cross-page/link-graph-health` | 15 | Measures average internal link count and dead-end page ratio |
+| `cross-page/canonical-conflicts` | 15 | Detects pages where multiple pages canonicalize to each other or use conflicting signals |
+| `cross-page/sitemap-coverage` | 20 | Compares sitemap URLs against crawled URLs — finds uncrawled sitemap pages and crawled pages missing from sitemap |
+
+### Rule Details
+
+#### cross-page/broken-internal-links
+- **Pass:** All internal links across the site return 200.
+- **Warn:** Some internal links return 4xx/5xx — reports count and affected URLs.
+- **Fix:** Update or remove broken internal links. Prefer 301 redirects for moved content.
+
+#### cross-page/duplicate-titles
+- **Pass:** All pages have unique titles.
+- **Warn/Fail:** Duplicate titles found — groups pages by shared title.
+- **Fix:** Write a unique descriptive title for each page. Use pattern "Page Topic | Brand Name".
+
+#### cross-page/orphan-pages
+- **Pass:** All crawled pages have at least one incoming internal link.
+- **Warn:** Some pages have no incoming links — lists orphaned URLs.
+- **Fix:** Add internal links to orphaned pages from relevant related pages or navigation.
+
+#### cross-page/link-graph-health
+- **Checks:** Average internal links per page, percentage of dead-end pages (pages with no outgoing links).
+- **Pass:** Healthy link graph.
+- **Warn/Fail:** Too many dead-end pages or insufficient internal linking.
+
+#### cross-page/canonical-conflicts
+- **Checks:** Pages where multiple pages point to the same canonical, or where canonical chains create conflicts.
+- **Fix:** Ensure each canonical URL is self-referencing or points to the definitive version consistently.
+
+#### cross-page/sitemap-coverage
+- **How it works:** Fetches `robots.txt` for `Sitemap:` directives, falls back to `/sitemap.xml`. Handles sitemap index files (fetches sub-sitemaps). Compares normalized sitemap URLs against the set of crawled URLs.
+- **Pass:** Sitemap covers ≥80% of crawled pages.
+- **Warn:** <20% of crawled pages missing from sitemap.
+- **Fail:** ≥20% of crawled pages missing from sitemap, or sitemap contains many uncrawled pages.
+- **Fix:** Keep sitemap up to date. Remove noindexed pages from sitemap. Add new pages promptly.
 
 ---
 
