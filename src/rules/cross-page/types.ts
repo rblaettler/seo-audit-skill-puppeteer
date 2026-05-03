@@ -23,7 +23,7 @@ export interface CrossPageRule {
   name: string;
   description: string;
   weight: number;
-  run: (pages: CrossPagePageData[]) => CrossPageRuleResult;
+  run: (pages: CrossPagePageData[]) => CrossPageRuleResult | Promise<CrossPageRuleResult>;
 }
 
 export interface SiteAnalysis {

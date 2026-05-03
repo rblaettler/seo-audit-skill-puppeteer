@@ -328,7 +328,7 @@ async function runCrossPageAnalysis(
       ? Math.round(validPages.reduce((sum, p) => sum + p.overallScore, 0) / validPages.length)
       : 0;
 
-  const siteAnalysis = analyzeSite(pages, avgPageScore);
+  const siteAnalysis = await analyzeSite(pages, avgPageScore);
   console.log(
     `[worker] step=analysis-done siteScore=${siteAnalysis.score} combined=${siteAnalysis.combinedScore}`
   );

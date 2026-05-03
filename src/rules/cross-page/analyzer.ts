@@ -2,9 +2,9 @@ import './index.js';
 import { getAllCrossPageRules } from './registry.js';
 import type { CrossPagePageData, SiteAnalysis } from './types.js';
 
-export function analyzeSite(pages: CrossPagePageData[], avgPageScore: number): SiteAnalysis {
+export async function analyzeSite(pages: CrossPagePageData[], avgPageScore: number): Promise<SiteAnalysis> {
   const rules = getAllCrossPageRules();
-  const ruleResults = rules.map(rule => rule.run(pages));
+  const ruleResults = await Promise.all(rules.map(rule => rule.run(pages)));
 
   const totalWeight = rules.reduce((sum, r) => sum + r.weight, 0);
   const siteScore =
